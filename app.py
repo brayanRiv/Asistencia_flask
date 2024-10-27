@@ -6,27 +6,25 @@ import pytz
 import random
 import string
 from PIL import Image
-
-app = Flask(__name__)
-
 import os
-import json
-import base64
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# Obtener las credenciales desde la variable de entorno
-credentials_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
-if credentials_json:
-    # Decodificar el contenido base64 y cargarlo como un diccionario
-    credentials_dict = json.loads(base64.b64decode(credentials_json))
-    cred = credentials.Certificate(credentials_dict)
-else:
-    # Para desarrollo local
-    cred = credentials.Certificate('serviceAccountKey.json')
+app = Flask(__name__)
 
+# Determinar la ruta al archivo de credenciales
+if os.path.exists('serviceAccountKey.json'):
+    # En Render, el archivo estará en el directorio raíz de la aplicación
+    cred_path = 'serviceAccountKey.json'
+else:
+    # Para desarrollo local, especifica la ruta a tu archivo de credenciales
+    cred_path = 'serviceAccountKey.json'
+
+# Inicializar Firebase Admin SDK
+cred = credentials.Certificate(cred_path)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
+
 @app.route('/')
 def index():
     class_id = request.args.get('class_id', 'default_class')
@@ -110,14 +108,18 @@ def generate_qr():
     img = qr.make_image(fill_color="darkblue", back_color="white").convert('RGB')
 
     # Agregar el logo al centro
-    logo = Image.open('logo.png')  # Asegúrate de que el archivo logo.png existe
-    logo_size = (60, 60)
-    logo = logo.resize(logo_size)
-    pos = (
-        (img.size[0] - logo_size[0]) // 2,
-        (img.size[1] - logo_size[1]) // 2
-    )
-    img.paste(logo, pos)
+    logo_path = 'logo.png'  # Asegúrate de que el archivo logo.png existe
+    if os.path.exists(logo_path):
+        logo = Image.open(logo_path)
+        logo_size = (60, 60)
+        logo = logo.resize(logo_size)
+        pos = (
+            (img.size[0] - logo_size[0]) // 2,
+            (img.size[1] - logo_size[1]) // 2
+        )
+        img.paste(logo, pos)
+    else:
+        print("Advertencia: El archivo logo.png no se encontró.")
 
     buf = BytesIO()
     img.save(buf, format='PNG')
