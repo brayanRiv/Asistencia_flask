@@ -6,20 +6,21 @@ import pytz
 import random
 import string
 from PIL import Image
-import firebase_admin
-from firebase_admin import credentials, firestore
+
+app = Flask(__name__)
+
 import os
 import json
 import base64
-from google.oauth2 import service_account
-
-app = Flask(__name__)
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # Obtener las credenciales desde la variable de entorno
 credentials_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
 if credentials_json:
+    # Decodificar el contenido base64 y cargarlo como un diccionario
     credentials_dict = json.loads(base64.b64decode(credentials_json))
-    cred = service_account.Credentials.from_service_account_info(credentials_dict)
+    cred = credentials.Certificate(credentials_dict)
 else:
     # Para desarrollo local
     cred = credentials.Certificate('serviceAccountKey.json')
