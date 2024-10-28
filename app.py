@@ -12,16 +12,18 @@ from firebase_admin import credentials, firestore
 
 app = Flask(__name__)
 
-# Determinar la ruta al archivo de credenciales
-if os.path.exists('serviceAccountKey.json'):
-    # En Render, el archivo estará en el directorio raíz de la aplicación
-    cred_path = 'serviceAccountKey.json'
-else:
-    # Para desarrollo local, especifica la ruta a tu archivo de credenciales
-    cred_path = 'serviceAccountKey.json'
-
 # Inicializar Firebase Admin SDK
-cred = credentials.Certificate(cred_path)
+if os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON'):
+    # En Heroku, cargamos las credenciales desde la variable de entorno
+    import json
+    cred_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+    cred_dict = json.loads(cred_json)
+    cred = credentials.Certificate(cred_dict)
+else:
+    # Para desarrollo local, utilizamos el archivo de credenciales
+    cred_path = 'serviceAccountKey.json'
+    cred = credentials.Certificate(cred_path)
+
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
