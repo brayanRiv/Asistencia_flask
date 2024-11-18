@@ -9,7 +9,8 @@ import string
 from PIL import Image
 import os
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import (credentials, firestore)
+
 
 app = Flask(__name__)
 
