@@ -1,4 +1,5 @@
-from flask import Flask, send_file, render_template_string, request
+# app.py
+from flask import Flask, send_file, render_template_string, request, json
 import qrcode
 from io import BytesIO
 from datetime import datetime, timedelta
@@ -13,10 +14,9 @@ from firebase_admin import credentials, firestore
 app = Flask(__name__)
 
 # Inicializar Firebase Admin SDK
-if os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON'):
+if os.environ.get('GOOGLE_CREDENTIALS_JSON'):
     # En Heroku, cargamos las credenciales desde la variable de entorno
-    import json
-    cred_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+    cred_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
     cred_dict = json.loads(cred_json)
     cred = credentials.Certificate(cred_dict)
 else:
@@ -29,11 +29,11 @@ db = firestore.client()
 
 @app.route('/')
 def index():
-    class_id = request.args.get('class_id', 'default_class')
-    duration = request.args.get('duration', '15')
+    session_id = request.args.get('session_id')
+    duration = request.args.get('duration', '1')  # Duration in minutes
 
-    if not class_id:
-        return "Error: 'class_id' no puede estar vacío.", 400
+    if not session_id:
+        return "Error: 'session_id' cannot be empty.", 400
 
     return render_template_string('''
     <!DOCTYPE html>
@@ -56,47 +56,41 @@ def index():
                 object-fit: contain;
             }
         </style>
-        <meta http-equiv="refresh" content="60">
+        <meta http-equiv="refresh" content="60">  <!-- Refresh every 60 seconds -->
     </head>
     <body>
-        <img id="qr" src="{{ url_for('generate_qr', class_id=class_id, duration=duration) }}" alt="QR Dinámico">
+        <img id="qr" src="{{ url_for('generate_qr', session_id=session_id) }}" alt="QR Dinámico">
     </body>
     </html>
-    ''', class_id=class_id, duration=duration)
+    ''', session_id=session_id)
 
 @app.route('/generate_qr')
 def generate_qr():
-    class_id = request.args.get('class_id')
-    duration = request.args.get('duration', '15')
+    session_id = request.args.get('session_id')
 
-    if not class_id:
-        return "Error: 'class_id' no puede estar vacío.", 400
+    if not session_id:
+        return "Error: 'session_id' cannot be empty.", 400
 
-    try:
-        duration = int(duration)
-    except ValueError:
-        return "Error: 'duration' debe ser un número entero.", 400
-
-    # Generar un token aleatorio
+    # Generate a random token
     token = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
 
-    # Obtener la hora actual en Perú
+    # Get current time in Peru
     peru_tz = pytz.timezone('America/Lima')
     now = datetime.now(peru_tz)
 
-    # Calcular el tiempo de expiración
-    expiration_time = (now + timedelta(minutes=duration)).timestamp()
+    # Calculate expiration time (optional, if you want to use it)
+    expiration_time = (now + timedelta(minutes=1)).timestamp()
 
-    # Guardar el token en Firestore
+    # Update the session document in Firestore with the new dynamic QR code
     data = {
-        'token': token,
-        'class_id': class_id,
-        'expiration_time': expiration_time
+        'dynamicQRCode': token,
+        'lastUpdated': firestore.SERVER_TIMESTAMP
     }
 
-    db.collection('attendance_tokens').document(class_id).set(data)
+    # Update the session's dynamicQRCode field
+    db.collection('sessions').document(session_id).update(data)
 
-    # Generar el código QR personalizado
+    # Generate the QR code with the token
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_H,
@@ -106,11 +100,11 @@ def generate_qr():
     qr.add_data(token)
     qr.make(fit=True)
 
-    # Personalizar el QR (color y logo)
-    img = qr.make_image(fill_color="darkblue", back_color="white").convert('RGB')
+    # Customize the QR code (optional: color, logo)
+    img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
 
-    # Agregar el logo al centro
-    logo_path = 'logo.png'  # Asegúrate de que el archivo logo.png existe
+    # Optionally add a logo to the QR code
+    logo_path = 'logo.png'  # Ensure that 'logo.png' exists in your project directory
     if os.path.exists(logo_path):
         logo = Image.open(logo_path)
         logo_size = (60, 60)
@@ -121,8 +115,9 @@ def generate_qr():
         )
         img.paste(logo, pos)
     else:
-        print("Advertencia: El archivo logo.png no se encontró.")
+        print("Warning: 'logo.png' not found.")
 
+    # Return the image as a response
     buf = BytesIO()
     img.save(buf, format='PNG')
     buf.seek(0)
