@@ -36,6 +36,28 @@ def index():
     if not session_id:
         return "Error: 'session_id' cannot be empty.", 400
 
+        # Obtener la sesión de Firestore
+    session_ref = db.collection('sessions').document(session_id)
+    session_doc = session_ref.get()
+    if not session_doc.exists:
+        return "Error: Session not found.", 404
+
+    session_data = session_doc.to_dict()
+
+    # Verificar si la sesión sigue activa
+    peru_tz = pytz.timezone('America/Lima')
+    now = datetime.now(peru_tz)
+    end_time = session_data.get('endTime')  # Esto es un timestamp de Firestore
+    tolerance_minutes = session_data.get('toleranceMinutes', 0)
+
+    if end_time:
+        end_time_datetime = end_time.replace(tzinfo=pytz.utc).astimezone(peru_tz)
+        total_allowed_time = end_time_datetime + timedelta(minutes=tolerance_minutes * 2)
+        if now > total_allowed_time:
+            # Desactivar la sesión
+            session_ref.update({'active': False})
+            return "La sesión ha finalizado.", 200
+
     return render_template_string('''
     <!DOCTYPE html>
     <html lang="es">
