@@ -1,5 +1,5 @@
 # app.py
-from flask import Flask, send_file, render_template_string, request, json
+from flask import Flask, send_file, render_template_string, request
 import qrcode
 from io import BytesIO
 from datetime import datetime, timedelta
@@ -9,14 +9,14 @@ import string
 from PIL import Image
 import os
 import firebase_admin
-from firebase_admin import (credentials, firestore)
-
+from firebase_admin import credentials, firestore
 
 app = Flask(__name__)
 
 # Inicializar Firebase Admin SDK
 if os.environ.get('GOOGLE_CREDENTIALS_JSON'):
-    # En Heroku, cargamos las credenciales desde la variable de entorno
+    # En producción, cargamos las credenciales desde la variable de entorno
+    import json
     cred_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
     cred_dict = json.loads(cred_json)
     cred = credentials.Certificate(cred_dict)
@@ -28,36 +28,48 @@ else:
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-@app.route('/')
-def index():
-    session_id = request.args.get('session_id')
-    duration = request.args.get('duration', '1')  # Duration in minutes
-
+def get_session_data(session_id):
     if not session_id:
-        return "Error: 'session_id' cannot be empty.", 400
+        return None, "Error: 'session_id' no puede estar vacío.", 400
 
-        # Obtener la sesión de Firestore
+    # Obtener la sesión de Firestore
     session_ref = db.collection('sessions').document(session_id)
     session_doc = session_ref.get()
     if not session_doc.exists:
-        return "Error: Session not found.", 404
+        return None, "Error: Sesión no encontrada.", 404
 
     session_data = session_doc.to_dict()
+    return session_data, None, None
+
+@app.route('/')
+def index():
+    session_id = request.args.get('session_id')
+
+    session_data, error_message, error_code = get_session_data(session_id)
+    if error_message:
+        return error_message, error_code
 
     # Verificar si la sesión sigue activa
     peru_tz = pytz.timezone('America/Lima')
     now = datetime.now(peru_tz)
-    end_time = session_data.get('endTime')  # Esto es un timestamp de Firestore
+    end_time = session_data.get('endTime')  # Timestamp de Firestore
     tolerance_minutes = session_data.get('toleranceMinutes', 0)
+    is_active = session_data.get('active', True)
 
     if end_time:
+        # Convertir el timestamp de Firestore a datetime
         end_time_datetime = end_time.replace(tzinfo=pytz.utc).astimezone(peru_tz)
         total_allowed_time = end_time_datetime + timedelta(minutes=tolerance_minutes * 2)
         if now > total_allowed_time:
-            # Desactivar la sesión
-            session_ref.update({'active': False})
+            if is_active:
+                # Desactivar la sesión
+                session_ref = db.collection('sessions').document(session_id)
+                session_ref.update({'active': False})
             return "La sesión ha finalizado.", 200
+    else:
+        return "Error: La sesión no tiene 'endTime' definido.", 400
 
+    # Renderizar la página con el QR dinámico
     return render_template_string('''
     <!DOCTYPE html>
     <html lang="es">
@@ -79,7 +91,7 @@ def index():
                 object-fit: contain;
             }
         </style>
-        <meta http-equiv="refresh" content="60">  <!-- Refresh every 60 seconds -->
+        <meta http-equiv="refresh" content="60">  <!-- Refrescar cada 60 segundos -->
     </head>
     <body>
         <img id="qr" src="{{ url_for('generate_qr', session_id=session_id) }}" alt="QR Dinámico">
@@ -91,29 +103,27 @@ def index():
 def generate_qr():
     session_id = request.args.get('session_id')
 
-    if not session_id:
-        return "Error: 'session_id' cannot be empty.", 400
+    session_data, error_message, error_code = get_session_data(session_id)
+    if error_message:
+        return error_message, error_code
 
-    # Generate a random token
+    is_active = session_data.get('active', True)
+
+    if not is_active:
+        return "La sesión no está activa.", 200
+
+    # Generar un token aleatorio
     token = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
 
-    # Get current time in Peru
-    peru_tz = pytz.timezone('America/Lima')
-    now = datetime.now(peru_tz)
-
-    # Calculate expiration time (optional, if you want to use it)
-    expiration_time = (now + timedelta(minutes=1)).timestamp()
-
-    # Update the session document in Firestore with the new dynamic QR code
+    # Actualizar el campo 'dynamicQRCode' en Firestore
     data = {
         'dynamicQRCode': token,
         'lastUpdated': firestore.SERVER_TIMESTAMP
     }
+    session_ref = db.collection('sessions').document(session_id)
+    session_ref.update(data)
 
-    # Update the session's dynamicQRCode field
-    db.collection('sessions').document(session_id).update(data)
-
-    # Generate the QR code with the token
+    # Generar el código QR con el token
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_H,
@@ -123,11 +133,11 @@ def generate_qr():
     qr.add_data(token)
     qr.make(fit=True)
 
-    # Customize the QR code (optional: color, logo)
+    # Crear la imagen del QR
     img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
 
-    # Optionally add a logo to the QR code
-    logo_path = 'logo.png'  # Ensure that 'logo.png' exists in your project directory
+    # (Opcional) Agregar un logo en el centro del QR
+    logo_path = 'logo.png'  # Asegúrate de que 'logo.png' exista en tu directorio
     if os.path.exists(logo_path):
         logo = Image.open(logo_path)
         logo_size = (60, 60)
@@ -138,9 +148,9 @@ def generate_qr():
         )
         img.paste(logo, pos)
     else:
-        print("Warning: 'logo.png' not found.")
+        print("Aviso: 'logo.png' no encontrado.")
 
-    # Return the image as a response
+    # Devolver la imagen como respuesta
     buf = BytesIO()
     img.save(buf, format='PNG')
     buf.seek(0)
