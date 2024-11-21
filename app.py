@@ -1,5 +1,5 @@
 # app.py
-from flask import Flask, send_file, render_template_string, request, json
+from flask import Flask, send_file, render_template_string, request
 import qrcode
 from io import BytesIO
 from datetime import datetime, timedelta
@@ -8,31 +8,10 @@ import random
 import string
 from PIL import Image
 import os
-import firebase_admin
-from firebase_admin import credentials, firestore
-from flask_apscheduler import APScheduler
 
-class Config:
-    SCHEDULER_API_ENABLED = True
+from firebase_config import db  # Importamos db desde firebase_config.py
 
 app = Flask(__name__)
-app.config.from_object(Config())
-
-# Inicializar Firebase Admin SDK
-if os.environ.get('GOOGLE_CREDENTIALS_JSON'):
-    # En Heroku, cargamos las credenciales desde la variable de entorno
-    cred_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-    cred_dict = json.loads(cred_json)
-    cred = credentials.Certificate(cred_dict)
-else:
-    # Para desarrollo local, utilizamos el archivo de credenciales
-    cred_path = 'serviceAccountKey.json'
-    cred = credentials.Certificate(cred_path)
-
-firebase_admin.initialize_app(cred)
-db = firestore.client()
-
-scheduler = APScheduler()
 
 def get_active_session(session_id):
     if not session_id:
@@ -46,43 +25,24 @@ def get_active_session(session_id):
 
     session_data = session_doc.to_dict()
 
-    # Verificar si la sesión sigue activa
+    # Verificar si el QR aún debe estar activo
     peru_tz = pytz.timezone('America/Lima')
     now = datetime.now(peru_tz)
-    end_time = session_data.get('endTime')  # Esto es un timestamp de Firestore
+    start_time = session_data.get('startTime')
     tolerance_minutes = session_data.get('toleranceMinutes', 0)
 
-    if end_time:
-        end_time_datetime = end_time.replace(tzinfo=pytz.utc).astimezone(peru_tz)
-        total_allowed_time = end_time_datetime + timedelta(minutes=tolerance_minutes * 2)
-        if now > total_allowed_time:
-            # Desactivar la sesión
-            session_ref.update({'active': False})
-            return None, ("La sesión ha finalizado.", 200)
+    if start_time:
+        # Convertir start_time de Timestamp a datetime con zona horaria
+        start_time_datetime = start_time.replace(tzinfo=pytz.utc).astimezone(peru_tz)
+        asistencia_end_time = start_time_datetime + timedelta(minutes=tolerance_minutes)
+        tardanza_end_time = asistencia_end_time + timedelta(minutes=tolerance_minutes * 2)
+        if now > tardanza_end_time:
+            # El período de registro ha terminado; el QR ya no debe generarse
+            return None, ("El período de registro ha terminado.", 200)
+    else:
+        return None, ("Error: La sesión no tiene hora de inicio definida.", 400)
 
     return session_data, None
-
-@scheduler.task('interval', id='update_session_status', minutes=1)
-def update_session_status():
-    peru_tz = pytz.timezone('America/Lima')
-    now = datetime.now(peru_tz)
-
-    # Obtener todas las sesiones activas
-    sessions_ref = db.collection('sessions')
-    active_sessions = sessions_ref.where('active', '==', True).stream()
-
-    for session in active_sessions:
-        session_data = session.to_dict()
-        end_time = session_data.get('endTime')
-        tolerance_minutes = session_data.get('toleranceMinutes', 0)
-
-        if end_time:
-            end_time_datetime = end_time.replace(tzinfo=pytz.utc).astimezone(peru_tz)
-            total_allowed_time = end_time_datetime + timedelta(minutes=tolerance_minutes * 2)
-            if now > total_allowed_time:
-                # Desactivar la sesión
-                sessions_ref.document(session.id).update({'active': False})
-                print(f"Sesión {session.id} ha sido desactivada.")
 
 @app.route('/')
 def index():
@@ -133,7 +93,7 @@ def generate_qr():
     # Actualizar el campo dynamicQRCode de la sesión en Firestore
     data = {
         'dynamicQRCode': token,
-        'lastUpdated': firestore.SERVER_TIMESTAMP
+        'lastUpdated': datetime.utcnow()
     }
 
     session_ref = db.collection('sessions').document(session_id)
@@ -174,6 +134,4 @@ def generate_qr():
     return send_file(buf, mimetype='image/png')
 
 if __name__ == '__main__':
-    scheduler.init_app(app)
-    scheduler.start()
     app.run(debug=True)
