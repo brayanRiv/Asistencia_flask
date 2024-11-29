@@ -29,18 +29,24 @@ def get_active_session(session_id):
     peru_tz = pytz.timezone('America/Lima')
     now = datetime.now(peru_tz)
     start_time = session_data.get('startTime')
+    end_time = session_data.get('endTime')
     tolerance_minutes = session_data.get('toleranceMinutes', 0)
 
-    if start_time:
-        # Convertir start_time de Timestamp a datetime con zona horaria
+    if start_time and end_time:
+        # Convertir start_time y end_time de Timestamp a datetime con zona horaria
         start_time_datetime = start_time.replace(tzinfo=pytz.utc).astimezone(peru_tz)
+        end_time_datetime = end_time.replace(tzinfo=pytz.utc).astimezone(peru_tz)
+
         asistencia_end_time = start_time_datetime + timedelta(minutes=tolerance_minutes)
         tardanza_end_time = asistencia_end_time + timedelta(minutes=tolerance_minutes * 2)
-        if now > tardanza_end_time:
+
+        if now < start_time_datetime:
+            return None, ("La sesión aún no ha comenzado.", 403)
+        elif now > tardanza_end_time:
             # El período de registro ha terminado; el QR ya no debe generarse
-            return None, ("El período de registro ha terminado.", 200)
+            return None, ("El período de registro ha terminado.", 403)
     else:
-        return None, ("Error: La sesión no tiene hora de inicio definida.", 400)
+        return None, ("Error: La sesión no tiene hora de inicio o fin definida.", 400)
 
     return session_data, None
 
