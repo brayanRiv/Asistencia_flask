@@ -1,4 +1,3 @@
-# app.py
 from flask import Flask, send_file, render_template_string, request
 import qrcode
 from io import BytesIO
@@ -138,6 +137,12 @@ def generate_qr():
     buf.seek(0)
 
     return send_file(buf, mimetype='image/png')
+
+@app.route('/server_time')
+def server_time():
+    peru_tz = pytz.timezone('America/Lima')
+    now = datetime.now(peru_tz)
+    return {'server_time': now.strftime("%Y-%m-%d")}
 
 if __name__ == '__main__':
     app.run(debug=True)
